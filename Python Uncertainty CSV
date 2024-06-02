@@ -1,0 +1,73 @@
+import pyodbc
+
+def update_uncertainty(id_num, new_uncertainty):
+    connection = pyodbc.connect('DSN=*****;UID=*****;PWD=*****')
+    cursor = connection.cursor()
+    
+    try:
+        # Step 1: Get MTAG from inventory
+        cursor.execute("SELECT MTAG FROM mt.inventory WHERE i4201 = ?", id_num)
+        mtag_row = cursor.fetchone()
+        
+        if mtag_row:
+            mtag = mtag_row[0]
+            print(f"MTAG: {mtag}")
+            # Step 2: Get CTAG from Calibration
+            cursor.execute("SELECT CTAG FROM mt.Calibration WHERE MTAG = ? AND C2339 = 1", mtag)
+            ctag_row = cursor.fetchone()
+            
+            if ctag_row:
+                ctag = ctag_row[0]
+                print(f"CTAG: {ctag}")
+                # Step 3: Get all rows from CalResults for the CTAG in the default order
+                cursor.execute("SELECT C2504 FROM mt.CalResults WHERE CTAG = ? ORDER BY C2504", ctag)
+                calresults_rows = cursor.fetchall()
+                
+                if calresults_rows:
+                    if isinstance(new_uncertainty, str) and ',' in new_uncertainty:
+                        # If new_uncertainty is a CSV list, split it into individual values
+                        uncertainties = [val.strip() for val in new_uncertainty.split(',')]
+                    else:
+                        # If new_uncertainty is a single value, repeat it for all rows
+                        uncertainties = [new_uncertainty] * len(calresults_rows)
+                    
+                    # If CSV list is shorter than the number of rows, pad with the last value
+                    if len(uncertainties) < len(calresults_rows):
+                        last_value = uncertainties[-1]
+                        uncertainties.extend([last_value] * (len(calresults_rows) - len(uncertainties)))
+                    
+                    # Print the uncertainties list for debugging
+                    print(f"Uncertainties: {uncertainties}")
+                    
+                    # Update each row with the corresponding uncertainty value
+                    for i, row in enumerate(calresults_rows):
+                        print(f"Updating row {i+1} with uncertainty: {uncertainties[i]}")
+                        cursor.execute("""
+                            UPDATE mt.CalResults
+                            SET MeasUncertainty = ?
+                            WHERE CTAG = ? AND C2504 = ?
+                        """, uncertainties[i], ctag, row.C2504)
+                        # Print the executed SQL for debugging
+                        print(f"Executed SQL: UPDATE mt.CalResults SET MeasUncertainty = {uncertainties[i]} WHERE CTAG = {ctag} AND C2504 = {row.C2504}")
+                    
+                    connection.commit()
+                    print("Measurement uncertainty updated successfully.")
+                else:
+                    print("No records found in CalResults for the given CTAG.")
+            else:
+                print("No CTAG found for the given MTAG and condition.")
+        else:
+            print("No MTAG found for the given ID number.")
+    
+    except Exception as e:
+        print("Error occurred:", e)
+    finally:
+        cursor.close()
+        connection.close()
+
+# Prompt the user for input
+id_num = input("Enter the ID number: ")
+new_uncertainty = input("Enter the new measurement uncertainty value (or CSV list): ")
+
+# Call the function with the provided input
+update_uncertainty(id_num, new_uncertainty)
